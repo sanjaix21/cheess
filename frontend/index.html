@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChessLens</title>
+  <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <div class="nav-logo">♟ ChessLens</div>
+    <div class="nav-links">
+      <button class="nav-btn active" onclick="showScreen('home')">Home</button>
+      <button class="nav-btn" onclick="showScreen('analyze')">Analyze</button>
+      <button class="nav-btn" onclick="showScreen('live')">Live</button>
+    </div>
+    <div id="sf-status" class="sf-status">Engine loading…</div>
+  </nav>
+
+  <!-- HOME -->
+  <div id="screen-home" class="screen active">
+    <div class="home-hero">
+      <h1>Analyze your chess.<br><em>Like a grandmaster.</em></h1>
+      <p class="sub">Powered by Stockfish · Free · No login needed</p>
+      <div class="home-actions">
+        <button class="btn-primary" onclick="showScreen('analyze')">Analyze a game</button>
+        <button class="btn-secondary" onclick="showScreen('live')">Live mode</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ANALYZE -->
+  <div id="screen-analyze" class="screen">
+
+    <!-- Step: Search -->
+    <div id="step-search" class="step active">
+      <div class="step-inner">
+        <h2>Find your games</h2>
+        <p class="sub">Enter your Chess.com username</p>
+        <div class="input-row">
+          <input id="username-input" type="text" placeholder="username">
+          <button class="btn-primary" onclick="loadGames()">Load</button>
+        </div>
+        <p id="search-error" class="error"></p>
+      </div>
+    </div>
+
+    <!-- Step: Game list -->
+    <div id="step-games" class="step">
+      <div class="step-inner wide">
+        <div class="step-header">
+          <button class="btn-back" onclick="showStep('search')">← Back</button>
+          <h2 id="games-title">Recent games</h2>
+        </div>
+        <div id="games-container"></div>
+      </div>
+    </div>
+
+    <!-- Step: Board -->
+    <div id="step-board" class="step">
+      <div class="analyzer-layout">
+
+        <!-- Eval bar -->
+        <div id="eval-bar">
+          <div id="eval-fill"></div>
+          <span id="eval-label-top" class="eval-label top">0.0</span>
+          <span id="eval-label-bot" class="eval-label bot"></span>
+        </div>
+
+        <!-- Board column -->
+        <div class="board-col">
+          <div class="player-strip">
+            <span class="player-name" id="top-name">—</span>
+            <span class="player-rating" id="top-rating"></span>
+            <span class="player-acc" id="top-acc"></span>
+          </div>
+          <div id="board"></div>
+          <div class="player-strip">
+            <span class="player-name" id="bot-name">—</span>
+            <span class="player-rating" id="bot-rating"></span>
+            <span class="player-acc" id="bot-acc"></span>
+          </div>
+          <div id="controls">
+            <button onclick="showStep('games')" title="Back to games">☰</button>
+            <button onclick="goFirst()">⏮</button>
+            <button onclick="goPrev()">◀</button>
+            <button onclick="goNext()">▶</button>
+            <button onclick="goLast()">⏭</button>
+            <button onclick="flipBoard()">⇅</button>
+          </div>
+        </div>
+
+        <!-- Right panel -->
+        <div id="right-panel">
+          <div class="panel-tabs">
+            <button class="ptab active" onclick="switchTab('info')">Info</button>
+            <button class="ptab" onclick="switchTab('moves')">Moves</button>
+            <button class="ptab" onclick="switchTab('mistakes')">Mistakes</button>
+          </div>
+
+          <div id="tab-info" class="ptab-content">
+            <div id="engine-line" class="engine-line">Select a game to analyze</div>
+            <div id="accuracy-box" class="accuracy-box" style="display:none">
+              <div class="acc-row">
+                <span id="acc-white-name" class="acc-name">White</span>
+                <div class="acc-bar-wrap"><div class="acc-bar" id="acc-bar-white"></div></div>
+                <span id="acc-white-val" class="acc-val"></span>
+              </div>
+              <div class="acc-row">
+                <span id="acc-black-name" class="acc-name">Black</span>
+                <div class="acc-bar-wrap"><div class="acc-bar" id="acc-bar-black"></div></div>
+                <span id="acc-black-val" class="acc-val"></span>
+              </div>
+            </div>
+            <div class="move-legend">
+              <div class="legend-item"><span class="dot" style="background:#97c27e"></span>Best</div>
+              <div class="legend-item"><span class="dot" style="background:#b8d68a"></span>Good</div>
+              <div class="legend-item"><span class="dot" style="background:#f4c542"></span>Inaccuracy</div>
+              <div class="legend-item"><span class="dot" style="background:#e8833a"></span>Mistake</div>
+              <div class="legend-item"><span class="dot" style="background:#e05252"></span>Blunder</div>
+            </div>
+          </div>
+
+          <div id="tab-moves" class="ptab-content" style="display:none">
+            <div id="moves-list" class="moves-list"></div>
+          </div>
+
+          <div id="tab-mistakes" class="ptab-content" style="display:none">
+            <div id="mistakes-list" class="moves-list"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- LIVE -->
+  <div id="screen-live" class="screen">
+    <div class="analyzer-layout">
+
+      <div id="live-eval-bar">
+        <div id="live-eval-fill"></div>
+        <span id="live-eval-top" class="eval-label top">0.0</span>
+        <span id="live-eval-bot" class="eval-label bot"></span>
+      </div>
+
+      <div class="board-col">
+        <div class="player-strip">
+          <span id="live-top-label" class="player-name">Black</span>
+        </div>
+        <div id="live-board"></div>
+        <div class="player-strip">
+          <span id="live-bot-label" class="player-name">White</span>
+        </div>
+        <div id="live-controls">
+          <button onclick="resetLive()">↺ Reset</button>
+          <button onclick="undoLiveMove()">← Undo</button>
+          <button onclick="flipLiveBoard()">⇅ Flip</button>
+        </div>
+      </div>
+
+      <div id="live-panel">
+        <h2>Live Analysis</h2>
+        <p class="sub">Enter each move as it's played on Chess.com</p>
+
+        <div id="live-best" class="live-best">Waiting for engine…</div>
+
+        <div class="live-input-row">
+          <input type="text" id="live-move-input" placeholder="e.g. e4, Nf3, O-O">
+          <button class="btn-primary" onclick="submitLiveMove()">→</button>
+        </div>
+        <p class="sub" style="margin-top:6px;font-size:0.78rem">Press Enter alone = best move was played</p>
+
+        <div class="live-log-header">
+          <span>Move log</span>
+          <button class="btn-tiny" onclick="resetLive()">Clear</button>
+        </div>
+        <div id="live-moves-list" class="live-moves-list"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+  <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+  <script src="analysis.js"></script>
+  <script src="engine.js"></script>
+  <script src="board.js"></script>
+</body>
+</html>
