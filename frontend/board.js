@@ -1,19 +1,20 @@
 // ── STATE ─────────────────────────────────────────────────────────────
 let board = null;
 let game  = new Chess();
-let moveHistory     = [];
+let moveHistory      = [];
 let analysisResults = [];
 let currentMoveIndex = -1;
 let flipped = false;
 let currentUsername = '';
 
 // Live mode
-let liveBoard     = null;
-let liveGame      = new Chess();
-let liveMoves     = [];
-let liveBestMove  = null;
-let liveThinking  = false;
-let liveFlipped   = false;
+let liveBoard    = null;
+let liveGame     = new Chess();
+let liveMoves    = [];
+let liveBestMove = null;
+let liveThinking = false;
+let liveFlipped  = false;
+let liveCpBefore = 0; // eval before current move
 
 // ── SCREEN / STEP NAV ────────────────────────────────────────────────
 function showScreen(name) {
@@ -22,7 +23,6 @@ function showScreen(name) {
     b.classList.toggle('active', ['home','analyze','live'][i] === name);
   });
   document.getElementById('screen-' + name).classList.add('active');
-
   if (name === 'live') initLiveBoard();
 }
 
@@ -49,7 +49,6 @@ async function loadGames() {
     let data = await res.json();
     let games = data.games || [];
 
-    // fallback: last month
     if (games.length === 0) {
       const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       res  = await fetch(`http://localhost:8000/games/${username}/${lm.getFullYear()}/${lm.getMonth() + 1}`);
@@ -118,31 +117,27 @@ async function openGame(gameData, username) {
   analysisResults  = [];
   currentMoveIndex = -1;
 
-  // Init board (draggable for review)
   if (board) board.destroy();
   board = Chessboard('board', {
-    draggable: true,
+    draggable: false,
     position: 'start',
     pieceTheme: 'https://lichess1.org/assets/piece/cburnett/{piece}.svg',
-    onDragStart: (src, piece) => false, // read-only during analysis nav
   });
 
-  // Player bars
   const topColor = flipped ? 'white' : 'black';
   const botColor = flipped ? 'black' : 'white';
   document.getElementById('top-name').textContent   = gameData[topColor].username;
   document.getElementById('top-rating').textContent = gameData[topColor].rating;
   document.getElementById('bot-name').textContent   = gameData[botColor].username;
   document.getElementById('bot-rating').textContent = gameData[botColor].rating;
-  document.getElementById('top-acc').textContent = '';
-  document.getElementById('bot-acc').textContent = '';
+  document.getElementById('top-acc').textContent    = '';
+  document.getElementById('bot-acc').textContent    = '';
   document.getElementById('accuracy-box').style.display = 'none';
 
   showStep('board');
   switchTab('info');
   goFirst();
 
-  // Analyze
   const positions = buildPositions();
   document.getElementById('engine-line').textContent = 'Analyzing…';
 
@@ -151,17 +146,17 @@ async function openGame(gameData, username) {
   });
 
   moveHistory.forEach((mv, i) => {
-    const cpBefore = toCp(evals[i]);
-    const cpAfter  = toCp(evals[i + 1]);
+    const cpBefore    = toCp(evals[i]);
+    const cpAfter     = toCp(evals[i + 1]);
     const isWhiteTurn = mv.color === 'w';
     analysisResults[i] = {
-      move:        mv,
+      move:           mv,
       cpBefore,
       cpAfter,
-      loss:        isWhiteTurn ? cpBefore - cpAfter : cpAfter - cpBefore,
+      loss:           isWhiteTurn ? cpBefore - cpAfter : cpAfter - cpBefore,
       classification: classifyMove(cpBefore, cpAfter, isWhiteTurn),
-      bestMove:    evals[i].bestMove,
-      bestMoveSan: uciToSan(positions[i], evals[i].bestMove),
+      bestMove:       evals[i].bestMove,
+      bestMoveSan:    uciToSan(positions[i], evals[i].bestMove),
     };
   });
 
@@ -225,7 +220,7 @@ function renderMovesList() {
       cell.id          = `move-${idx}`;
       cell.textContent = moveHistory[idx].san;
       cell.style.color = col;
-      cell.onclick = () => goTo(idx);
+      cell.onclick     = () => goTo(idx);
       row.appendChild(cell);
     });
 
@@ -273,12 +268,12 @@ function renderAccuracy(gameData, isWhite) {
   const wa = calcAccuracy(whiteMoves);
   const ba = calcAccuracy(blackMoves);
 
-  document.getElementById('acc-white-name').textContent = gameData.white.username;
-  document.getElementById('acc-black-name').textContent = gameData.black.username;
-  document.getElementById('acc-white-val').textContent  = wa + '%';
-  document.getElementById('acc-black-val').textContent  = ba + '%';
-  document.getElementById('acc-bar-white').style.width  = wa + '%';
-  document.getElementById('acc-bar-black').style.width  = ba + '%';
+  document.getElementById('acc-white-name').textContent    = gameData.white.username;
+  document.getElementById('acc-black-name').textContent    = gameData.black.username;
+  document.getElementById('acc-white-val').textContent     = wa + '%';
+  document.getElementById('acc-black-val').textContent     = ba + '%';
+  document.getElementById('acc-bar-white').style.width     = wa + '%';
+  document.getElementById('acc-bar-black').style.width     = ba + '%';
   document.getElementById('acc-bar-white').style.background = accColor(wa);
   document.getElementById('acc-bar-black').style.background = accColor(ba);
 
@@ -305,39 +300,29 @@ function goNext()  { if (currentMoveIndex < moveHistory.length - 1) goTo(current
 
 function goTo(idx) {
   currentMoveIndex = idx;
-
   const g = new Chess();
   for (let i = 0; i <= idx; i++) g.move(moveHistory[i].san);
   board.position(g.fen(), false);
 
-  // Clear highlights
-  $('.square-55d63').removeClass('sq-from sq-to sq-blunder sq-mistake sq-inaccuracy sq-best sq-good sq-best-move');
+  $('.square-55d63').removeClass('sq-blunder sq-mistake sq-inaccuracy sq-best sq-good sq-best-move');
 
   if (idx >= 0) {
     const mv  = moveHistory[idx];
     const res = analysisResults[idx];
-
     if (res) {
       const cls = res.classification;
       $(`.square-${mv.from}, .square-${mv.to}`).addClass(`sq-${cls}`);
-
-      // Highlight best move in green if player didn't play it
-      if (res.bestMoveSan && res.bestMove && cls !== 'best' && cls !== 'good') {
-        const bm = res.bestMove;
-        const bmFrom = bm.slice(0, 2);
-        const bmTo   = bm.slice(2, 4);
-        $(`.square-${bmFrom}, .square-${bmTo}`).addClass('sq-best-move');
+      if (res.bestMove && cls !== 'best' && cls !== 'good') {
+        $(`.square-${res.bestMove.slice(0,2)}, .square-${res.bestMove.slice(2,4)}`).addClass('sq-best-move');
       }
     }
   }
 
-  // Active move cell
   document.querySelectorAll('.move-cell').forEach(el => el.classList.remove('move-active'));
   if (idx >= 0) {
     const cell = document.getElementById(`move-${idx}`);
     if (cell) { cell.classList.add('move-active'); cell.scrollIntoView({ block: 'nearest' }); }
   }
-
   updateEvalBar(idx);
   updateEngineLine(idx);
 }
@@ -355,7 +340,7 @@ function updateEvalBar(idx) {
 }
 
 function setEvalBar(fillId, topId, botId, cp) {
-  const pct  = Math.max(5, Math.min(95, 50 + 50 * (1 - 2 / (1 + Math.exp(-cp / 400)))));
+  const pct = Math.max(5, Math.min(95, 50 + 50 * (1 - 2 / (1 + Math.exp(-cp / 400)))));
   document.getElementById(fillId).style.height = (100 - pct) + '%';
   const abs = Math.abs(cp / 100).toFixed(1);
   if (cp > 0) {
@@ -386,9 +371,225 @@ function switchTab(name) {
   document.querySelectorAll('.ptab').forEach((t, i) => {
     t.classList.toggle('active', ['info','moves','mistakes'][i] === name);
   });
-  document.getElementById('tab-info').style.display      = name === 'info'      ? 'block' : 'none';
-  document.getElementById('tab-moves').style.display     = name === 'moves'     ? 'block' : 'none';
-  document.getElementById('tab-mistakes').style.display  = name === 'mistakes'  ? 'block' : 'none';
+  document.getElementById('tab-info').style.display     = name === 'info'     ? 'block' : 'none';
+  document.getElementById('tab-moves').style.display    = name === 'moves'    ? 'block' : 'none';
+  document.getElementById('tab-mistakes').style.display = name === 'mistakes' ? 'block' : 'none';
+}
+
+// ── LIVE MODE ─────────────────────────────────────────────────────────
+function initLiveBoard() {
+  if (liveBoard) return;
+  liveBoard = Chessboard('live-board', {
+    draggable: true,
+    position: 'start',
+    pieceTheme: 'https://lichess1.org/assets/piece/cburnett/{piece}.svg',
+    onDragStart: onLiveDragStart,
+    onDrop: onLiveDrop,
+    onSnapEnd: onLiveSnapEnd,
+  });
+
+  $('#live-board').on('click', '.square-55d63', function() {
+    const square = $(this).attr('data-square');
+    const piece  = liveGame.get(square);
+    if (!selectedSquare) {
+      if (!piece || piece.color !== liveGame.turn()) return;
+      selectedSquare = square;
+      $(this).css('box-shadow', 'inset 0 0 0 3px #6c63ff');
+      return;
+    }
+    if (selectedSquare === square) {
+      selectedSquare = null;
+      $('.square-55d63').css('box-shadow', '');
+      return;
+    }
+    const bestSan = uciToSan(liveGame.fen(), liveBestMove);
+    const move = liveGame.move({ from: selectedSquare, to: square, promotion: 'q' });
+    $('.square-55d63').css('box-shadow', '');
+    selectedSquare = null;
+    if (!move) {
+      if (piece && piece.color === liveGame.turn()) {
+        selectedSquare = square;
+        $(this).css('box-shadow', 'inset 0 0 0 3px #6c63ff');
+      }
+      return;
+    }
+    pushLiveMove(move, bestSan);
+    liveBoard.position(liveGame.fen());
+    renderLiveMoves();
+    if (liveGame.game_over()) {
+      document.getElementById('live-best').textContent = 'Game over!';
+      return;
+    }
+    requestLiveBest();
+  });
+  requestLiveBest();
+}
+
+let selectedSquare = null;
+
+function onLiveDragStart(source, piece) {
+  if (liveGame.game_over()) return false;
+  const turn = liveGame.turn();
+  if ((turn === 'w' && piece.startsWith('b')) || (turn === 'b' && piece.startsWith('w'))) return false;
+  return true;
+}
+
+function onLiveDrop(source, target) {
+  const bestSan = uciToSan(liveGame.fen(), liveBestMove);
+  const move = liveGame.move({ from: source, to: target, promotion: 'q' });
+  if (!move) return 'snapback';
+  pushLiveMove(move, bestSan);
+  renderLiveMoves();
+  if (liveGame.game_over()) {
+    document.getElementById('live-best').textContent = 'Game over!';
+    return;
+  }
+  requestLiveBest();
+}
+
+function onLiveSnapEnd() {
+  liveBoard.position(liveGame.fen());
+}
+
+function classifyLiveMove(bestSan, actualSan, cpBefore, cpAfter, isWhiteTurn) {
+  if (actualSan === bestSan) return 'best';
+  const loss = isWhiteTurn ? cpBefore - cpAfter : cpAfter - cpBefore;
+  if (loss <= 0)   return 'best';
+  if (loss <= 25)  return 'good';
+  if (loss <= 50)  return 'inaccuracy';
+  if (loss <= 100) return 'mistake';
+  return 'blunder';
+}
+
+function requestLiveBest() {
+  if (liveThinking || liveGame.game_over()) return;
+  liveThinking = true;
+  document.getElementById('live-best').textContent = 'Engine thinking…';
+  analyzePosition(liveGame.fen(), 16, (bestMove, info) => {
+    liveThinking = false;
+    liveBestMove = bestMove;
+    liveCpBefore = info && info.cp !== null ? info.cp : 0; 
+    const san  = uciToSan(liveGame.fen(), bestMove);
+    const turn = liveGame.turn() === 'w' ? 'White' : 'Black';
+    const ev   = (liveCpBefore >= 0 ? '+' : '') + (liveCpBefore / 100).toFixed(2);
+    document.getElementById('live-best').innerHTML =
+      `<span class="live-turn">${turn} to move</span>` +
+      `<span class="live-suggestion">Best: <b>${san || bestMove}</b></span>` +
+      `<span class="live-eval">${ev}</span>`;
+    $('.square-55d63').removeClass('sq-best-move');
+    if (bestMove && bestMove !== '(none)') {
+      $(`.square-${bestMove.slice(0,2)}, .square-${bestMove.slice(2,4)}`).addClass('sq-best-move');
+    }
+    setEvalBar('live-eval-fill', 'live-eval-top', 'live-eval-bot', liveCpBefore);
+    document.getElementById('live-move-input').focus();
+  });
+}
+
+function pushLiveMove(move, bestSan) {
+  const isWhiteTurn = move.color === 'w';
+  analyzePosition(liveGame.fen(), 12, (_, info) => {
+    const cpAfter  = info && info.cp !== null ? info.cp : 0;
+    const label    = classifyLiveMove(bestSan, move.san, liveCpBefore, cpAfter, isWhiteTurn);
+    const lastMove = liveMoves[liveMoves.length - 1];
+    if (lastMove && lastMove.label === null) {
+      lastMove.label = label;
+      lastMove.cpAfter = cpAfter;
+      renderLiveMoves();
+    }
+  });
+  liveMoves.push({
+    turn:   move.color === 'w' ? 'W' : 'B',
+    best:   bestSan || '?',
+    actual: move.san,
+    label:  null, 
+  });
+}
+
+function submitLiveMove() {
+  const input   = document.getElementById('live-move-input');
+  const rawVal  = input.value.trim();
+  const bestSan = uciToSan(liveGame.fen(), liveBestMove);
+  const san = rawVal === '' ? bestSan : rawVal;
+  if (!san) return;
+  const move = liveGame.move(san, { sloppy: true });
+  if (!move) {
+    input.style.borderColor = '#e05252';
+    setTimeout(() => input.style.borderColor = '', 800);
+    return;
+  }
+  input.value = '';
+  pushLiveMove(move, bestSan);
+  liveBoard.position(liveGame.fen());
+  renderLiveMoves();
+  if (liveGame.game_over()) {
+    document.getElementById('live-best').textContent = 'Game over!';
+    return;
+  }
+  requestLiveBest();
+}
+
+function undoLiveMove() {
+  if (liveMoves.length === 0) return;
+  liveGame.undo();
+  liveMoves.pop();
+  liveBoard.position(liveGame.fen());
+  renderLiveMoves();
+  liveBestMove = null;
+  liveThinking = false;
+  requestLiveBest();
+}
+
+const LIVE_LABELS = {
+  best:       { color: '#97c27e', icon: '✓', text: 'Best'       },
+  good:       { color: '#b8d68a', icon: '·', text: 'Good'       },
+  inaccuracy: { color: '#f4c542', icon: '?!', text: 'Inaccuracy' },
+  mistake:    { color: '#e8833a', icon: '?',  text: 'Mistake'   },
+  blunder:    { color: '#e05252', icon: '??', text: 'Blunder'   },
+};
+
+function renderLiveMoves() {
+  const container = document.getElementById('live-moves-list');
+  container.innerHTML = '';
+  for (let i = 0; i < liveMoves.length; i += 2) {
+    const row = document.createElement('div');
+    row.className = 'live-move-row';
+    const num = document.createElement('span');
+    num.className   = 'move-num';
+    num.textContent = Math.floor(i / 2) + 1 + '.';
+    row.appendChild(num);
+    [i, i + 1].forEach(idx => {
+      if (idx >= liveMoves.length) return;
+      const m   = liveMoves[idx];
+      const lbl = m.label ? (LIVE_LABELS[m.label] || LIVE_LABELS.good) : null;
+      const cell = document.createElement('div');
+      cell.className = 'live-move-cell';
+      cell.innerHTML = `
+        <span class="lmc-best">${m.best}</span>
+        <span class="lmc-actual" style="color:${lbl ? lbl.color : '#ccc'}">${m.actual}</span>
+        <span class="lmc-icon" style="color:${lbl ? lbl.color : '#666'}">${lbl ? lbl.icon + ' ' + lbl.text : '…'}</span>
+      `;
+      row.appendChild(cell);
+    });
+    container.appendChild(row);
+  }
+  container.scrollTop = container.scrollHeight;
+}
+
+function resetLive() {
+  liveGame     = new Chess();
+  liveMoves    = [];
+  liveBestMove = null;
+  liveThinking = false;
+  if (liveBoard) liveBoard.position('start');
+  document.getElementById('live-moves-list').innerHTML = '';
+  document.getElementById('live-best').textContent = 'Waiting for engine…';
+  setEvalBar('live-eval-fill', 'live-eval-top', 'live-eval-bot', 0);
+  requestLiveBest();
+}
+
+function flipLiveBoard() {
+  liveFlipped = !liveFlipped;
+  if (liveBoard) liveBoard.flip();
 }
 
 // ── KEYBOARD ──────────────────────────────────────────────────────────
@@ -402,225 +603,5 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowDown')  goLast();
 });
 
-document.getElementById('username-input')
-  .addEventListener('keydown', e => { if (e.key === 'Enter') loadGames(); });
-
-// ── LIVE MODE ─────────────────────────────────────────────────────────
-function initLiveBoard() {
-  if (liveBoard) return;
-
-  liveBoard = Chessboard('live-board', {
-    draggable: true,
-    position: 'start',
-    pieceTheme: 'https://lichess1.org/assets/piece/cburnett/{piece}.svg',
-    onDragStart: onLiveDragStart,
-    onDrop: onLiveDrop,
-    onSnapEnd: onLiveSnapEnd,
-  });
-
-  // Click-to-move
-  let selectedSquare = null;
-
-  $('#live-board').on('click', '.square-55d63', function() {
-    const square = $(this).attr('data-square');
-    const piece  = liveGame.get(square);
-
-    // Nothing selected yet
-    if (!selectedSquare) {
-      if (!piece) return;
-      // Must be current turn's piece
-      if (piece.color !== liveGame.turn()) return;
-      selectedSquare = square;
-      $(this).css('border', '3px solid #6c63ff');
-      return;
-    }
-
-    // Same square clicked — deselect
-    if (selectedSquare === square) {
-      selectedSquare = null;
-      $('.square-55d63').css('border', '');
-      return;
-    }
-
-    // Try the move
-    const move = liveGame.move({
-      from: selectedSquare,
-      to: square,
-      promotion: 'q'
-    });
-
-    $('.square-55d63').css('border', '');
-    selectedSquare = null;
-
-    if (!move) {
-      // Maybe clicked another own piece — select that instead
-      if (piece && piece.color === liveGame.turn()) {
-        selectedSquare = square;
-        $(this).css('border', '3px solid #6c63ff');
-      }
-      return;
-    }
-
-    liveBoard.position(liveGame.fen());
-    handleLiveMove(move);
-  });
-
-  requestLiveBest();
-}
-
-function onLiveDragStart(source, piece) {
-  if (liveGame.game_over()) return false;
-  const turn = liveGame.turn();
-  if ((turn === 'w' && piece.startsWith('b')) ||
-      (turn === 'b' && piece.startsWith('w'))) return false;
-  return true;
-}
-
-function onLiveDrop(source, target) {
-  const move = liveGame.move({ from: source, to: target, promotion: 'q' });
-  if (!move) return 'snapback';
-  handleLiveMove(move);
-}
-
-function onLiveSnapEnd() {
-  liveBoard.position(liveGame.fen());
-}
-
-function resetLive() {
-  liveGame     = new Chess();
-  liveMoves    = [];
-  liveBestMove = null;
-  liveThinking = false;
-  if (liveBoard) liveBoard.position('start');
-  document.getElementById('live-moves-list').innerHTML = '';
-  document.getElementById('live-best').textContent = 'Waiting for engine…';
-  document.getElementById('live-move-input').value = '';
-  setEvalBar('live-eval-fill', 'live-eval-top', 'live-eval-bot', 0);
-  requestLiveBest();
-}
-
-function flipLiveBoard() {
-  liveFlipped = !liveFlipped;
-  if (liveBoard) liveBoard.flip();
-  document.getElementById('live-top-label').textContent = liveFlipped ? 'White' : 'Black';
-  document.getElementById('live-bot-label').textContent = liveFlipped ? 'Black' : 'White';
-}
-
-function requestLiveBest() {
-  if (liveThinking || liveGame.game_over()) return;
-  liveThinking = true;
-  document.getElementById('live-best').textContent = 'Engine thinking…';
-
-  analyzePosition(liveGame.fen(), 16, (bestMove, info) => {
-    liveThinking = false;
-    liveBestMove = bestMove;
-    const san = uciToSan(liveGame.fen(), bestMove);
-    const turn = liveGame.turn() === 'w' ? 'White' : 'Black';
-    const cp   = info && info.cp !== null ? info.cp : null;
-    const ev   = cp !== null ? (cp >= 0 ? '+' : '') + (cp / 100).toFixed(2) : '';
-
-    document.getElementById('live-best').innerHTML =
-      `<span class="live-turn">${turn} to move</span>` +
-      `<span class="live-suggestion">Best: <b>${san || bestMove}</b></span>` +
-      (ev ? `<span class="live-eval">${ev}</span>` : '');
-
-    // Highlight best move squares
-    $('.square-55d63').removeClass('sq-best-move');
-    if (bestMove && bestMove !== '(none)') {
-      $(`.square-${bestMove.slice(0,2)}, .square-${bestMove.slice(2,4)}`).addClass('sq-best-move');
-    }
-
-    if (cp !== null) setEvalBar('live-eval-fill', 'live-eval-top', 'live-eval-bot', cp);
-    document.getElementById('live-move-input').focus();
-  });
-}
-
-// Called from both drag-drop and text input
-
-function handleLiveMove(move) {
-  const bestSan = uciToSan(liveGame.fen(), liveBestMove);
-
-  // Wait — move already made in liveGame if from drag, otherwise make it here
-  const matched = move.san === bestSan;
-
-  liveMoves.push({ turn: move.color === 'w' ? 'W' : 'B', best: bestSan || '?', actual: move.san, matched });
-  liveBoard.position(liveGame.fen());
-  renderLiveMoves();
-
-  if (liveGame.game_over()) {
-    document.getElementById('live-best').textContent = 'Game over!';
-    return;
-  }
-  requestLiveBest();
-}
-
-function submitLiveMove() {
-  const input  = document.getElementById('live-move-input');
-  const rawVal = input.value.trim();
-  const bestSan = uciToSan(liveGame.fen(), liveBestMove);
-
-  const san = rawVal === '' ? bestSan : rawVal;
-  if (!san) return;
-
-  const move = liveGame.move(san, { sloppy: true });
-  if (!move) {
-    input.style.borderColor = '#e05252';
-    setTimeout(() => input.style.borderColor = '', 800);
-    return;
-  }
-
-  input.value = '';
-  input.style.borderColor = '';
-  handleLiveMove(move);
-}
-
-function undoLiveMove() {
-  if (liveMoves.length === 0) return;
-
-  liveGame.undo();
-  liveMoves.pop();
-  liveBoard.position(liveGame.fen());
-  renderLiveMoves();
-
-  // Force reset thinking state before requesting
-  liveBestMove = null;
-  liveThinking = false;  // ← this is the key fix
-  sfQueue = [];           // ← clear any pending engine requests
-
-  $('.square-55d63').removeClass('sq-best-move');
-  document.getElementById('live-best').textContent = 'Engine thinking…';
-  requestLiveBest();
-}
-function renderLiveMoves() {
-  const container = document.getElementById('live-moves-list');
-  container.innerHTML = '';
-
-  for (let i = 0; i < liveMoves.length; i += 2) {
-    const row = document.createElement('div');
-    row.className = 'live-move-row';
-
-    const num = document.createElement('span');
-    num.className   = 'move-num';
-    num.textContent = Math.floor(i / 2) + 1 + '.';
-    row.appendChild(num);
-
-    [i, i+1].forEach(idx => {
-      if (idx >= liveMoves.length) return;
-      const m = liveMoves[idx];
-      const cell = document.createElement('div');
-      cell.className = 'live-move-cell';
-      cell.innerHTML = `
-        <span class="lmc-best">${m.best}</span>
-        <span class="lmc-actual" style="color:${m.matched ? '#97c27e' : '#e05252'}">${m.actual}</span>
-        <span class="lmc-icon">${m.matched ? '✓' : '✗'}</span>
-      `;
-      row.appendChild(cell);
-    });
-
-    container.appendChild(row);
-  }
-  container.scrollTop = container.scrollHeight;
-}
-
-document.getElementById('live-move-input')
-  .addEventListener('keydown', e => { if (e.key === 'Enter') submitLiveMove(); });
+document.getElementById('username-input').addEventListener('keydown', e => { if (e.key === 'Enter') loadGames(); });
+document.getElementById('live-move-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitLiveMove(); });

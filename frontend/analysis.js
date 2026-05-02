@@ -5,19 +5,17 @@ function normalizeCp(cp, isWhiteTurn) {
 }
 
 // classify a single move
-function classifyMove(
-  cpBefore, cpAfter, isWhiteTurn) {
-  const before = normalizeCp(cpBefore, isWhiteTurn);
-  const after = normalizeCp(cpAfter, isWhiteTurn);
-  const loss = before - after;
-
-  if (loss <= 0) return 'best';
-  if (loss <= 20) return 'good';
-  if (loss <= 50) return 'inaccuracy';
-  if (loss <= 100) return 'mistake';
-  return 'blunder';
+function classifyMove(cpBefore, cpAfter, isWhiteTurn) {
+    const loss = isWhiteTurn ? cpBefore - cpAfter : cpAfter - cpBefore;
+    
+    // Win-probability based thresholds (simplified for CP)
+    if (loss <= 10) return 'best';      // Top engine move or near-equal
+    if (loss <= 30) return 'excellent'; // Very small error
+    if (loss <= 75) return 'good';      // Solid move
+    if (loss <= 150) return 'inaccuracy'; 
+    if (loss <= 300) return 'mistake';
+    return 'blunder';                   // Major evaluation drop
 }
-
 // Calculate accuracy
 function calculateAccuracy(moves) {
   const totalLoss = moves.reduce((sum, m) => {
